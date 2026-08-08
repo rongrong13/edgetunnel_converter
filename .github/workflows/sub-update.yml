@@ -1,1 +1,45 @@
-111
+name: 每日更新订阅
+
+on:
+  schedule:
+    - cron: "0 1 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  update-sub:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - run: pip install pyyaml
+
+      - name: 检查 Secret 配置
+        env:
+          SUB_URL: ${{ secrets.SUB_URL }}
+          GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
+        run: |
+          if [ -z "$SUB_URL" ]; then
+            echo "::error::未配置 SUB_URL Secret"
+            exit 1
+          fi
+          if [ -z "$GIST_TOKEN" ]; then
+            echo "::error::未配置 GIST_TOKEN Secret"
+            exit 1
+          fi
+
+      - name: 运行订阅转换脚本
+        env:
+          SUB_URL: ${{ secrets.SUB_URL }}
+        run: python3 sub_convert.py
+
+      - name: 上传到 Secret Gist
+        env:
+          GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
+        run: python3 gist_upload.py
