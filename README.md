@@ -1,0 +1,1 @@
+针对路openclash没办法直接获取edgetunnel构建的项目订阅。特意写此脚本，配置好GIST-Token和自建网站地址作为Secerts就可以运行。
