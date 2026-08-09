@@ -559,8 +559,7 @@ def main():
     # 逐个拉取并解析订阅,合并所有节点
     all_proxies = []
     for i, url in enumerate(urls, start=1):
-        # 注意:只打印脱敏后的地址,绝不把含 token 的完整 URL 输出到日志
-        print(f"[{i}/{len(urls)}] 正在拉取订阅: {mask_subscription_url(url)}")
+        print(f"[{i}/{len(urls)}] 正在拉取订阅...")
         try:
             text = fetch_subscription(url)
         except Exception as e:
