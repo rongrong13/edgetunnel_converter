@@ -517,15 +517,26 @@ def mask_subscription_url(url: str) -> str:
     )
 
 
+def split_urls(urls_text: str):
+    """把多个订阅地址(逗号或换行分隔)拆成列表。
+
+    :param urls_text: 原始输入,可含多个地址,用逗号或换行分隔
+    :return: 去空白后的地址列表
+    """
+    # 统一把逗号、换行都当作分隔符
+    parts = re.split(r"[,，\n]+", urls_text.strip())
+    return [p.strip() for p in parts if p.strip()]
+
+
 def main():
-    """命令行入口:拉取订阅 → 提取节点 → 输出纯净 YAML。"""
+    """命令行入口:拉取订阅(可多个)→ 提取节点 → 合并去重 → 输出纯净 YAML。"""
     parser = argparse.ArgumentParser(
-        description="edgetunnel 订阅转换:拉取订阅并生成只含节点的纯净 Clash YAML"
+        description="edgetunnel 订阅转换:拉取一个或多个订阅并生成只含节点的纯净 Clash YAML"
     )
     parser.add_argument(
         "--url",
         default=None,
-        help="订阅地址(可选;也可通过环境变量 SUB_URL 提供,二者都提供时优先用 --url)",
+        help="订阅地址(可多个,用逗号分隔;也可通过环境变量 SUB_URL 提供)",
     )
     parser.add_argument(
         "-o", "--output",
@@ -535,31 +546,65 @@ def main():
     args = parser.parse_args()
 
     # 订阅地址获取优先级:命令行 --url > 环境变量 SUB_URL > 报错退出
-    url = args.url or os.environ.get("SUB_URL")
-    if not url:
+    urls = split_urls(args.url) if args.url else split_urls(os.environ.get("SUB_URL", ""))
+    if not urls:
         print(
             "错误: 未提供订阅地址。请使用 --url 参数,或设置环境变量 SUB_URL。\n"
-            "示例: SUB_URL='https://xxx/sub?token=xxx&clash' python3 sub_convert.py",
+            "示例: SUB_URL='https://xxx/sub?token=xxx&clash' python3 sub_convert.py\n"
+            "支持多个订阅,用逗号分隔: SUB_URL='url1,url2'",
             file=sys.stderr,
         )
         sys.exit(1)
 
-    # 注意:只打印脱敏后的地址,绝不把含 token 的完整 URL 输出到日志
-    print(f"[1/3] 正在拉取订阅...")
-    text = fetch_subscription(url)
+    # 逐个拉取并解析订阅,合并所有节点
+    all_proxies = []
+    for i, url in enumerate(urls, start=1):
+        # 注意:只打印脱敏后的地址,绝不把含 token 的完整 URL 输出到日志
+        print(f"[{i}/{len(urls)}] 正在拉取订阅: {mask_subscription_url(url)}")
+        try:
+            text = fetch_subscription(url)
+        except Exception as e:
+            # 单个订阅失败不中断整体,记录后继续拉取下一个
+            print(f"    警告: 该订阅拉取失败,跳过。", file=sys.stderr)
+            continue
+        proxies = extract_proxies(text)
+        if not proxies:
+            print(f"    警告: 该订阅未解析出任何节点,跳过。", file=sys.stderr)
+            continue
+        print(f"    该订阅提取 {len(proxies)} 个节点")
+        all_proxies.extend(proxies)
 
-    print("[2/3] 正在解析订阅内容...")
-    proxies = extract_proxies(text)
-    if not proxies:
-        print("错误: 未能从订阅中解析出任何节点,请检查订阅地址是否有效。", file=sys.stderr)
+    if not all_proxies:
+        print("错误: 所有订阅均未解析出任何节点,请检查订阅地址是否有效。", file=sys.stderr)
         sys.exit(1)
 
-    print(f"[3/3] 共提取 {len(proxies)} 个节点...")
+    # 合并去重:按 (type, server, port) 判重,保留第一个出现的节点
+    seen = set()
+    merged = []
+    for p in all_proxies:
+        key = (p.get("type"), p.get("server"), p.get("port"))
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(p)
+
+    # 重名处理:同名节点追加序号,保证 Clash 配置中节点名唯一
+    name_count = {}
+    for p in merged:
+        name = p.get("name", "unnamed")
+        n = name_count.get(name, 0)
+        name_count[name] = n + 1
+        if n > 0:
+            p["name"] = f"{name} ({n + 1})"
+
+    print(f"[3/3] 合并后共 {len(merged)} 个节点(去重 {len(all_proxies) - len(merged)} 个),"
+          f"正在写入订阅文件…")
     with open(args.output, "w", encoding="utf-8") as f:
-        f.write(render_proxies_yaml(proxies))
+        f.write(render_proxies_yaml(merged))
 
     print(f"完成! ...")
-    print(f"提示: ...")
+    print(f"提示: 该文件只包含 proxies,不含 dns/proxy-groups/rules,"
+          f"可直接用于 subs-check 和 OpenClash。")
 
 
 if __name__ == "__main__":
